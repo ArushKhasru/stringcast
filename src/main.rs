@@ -13,6 +13,8 @@ use stringcast::platform::{PermissionChecker, SystemPermissionChecker};
 use stringcast::runtime::StringcastRuntime;
 use stringcast::storage::{config_file_path, ApiKeyConfig, AppConfig, KeyringKeyMaterialStore};
 
+const INPUT_EVENT_QUEUE_CAPACITY: usize = 1024;
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("Stringcast failed to start: {error}");
@@ -63,7 +65,7 @@ fn run() -> Result<(), String> {
 
     let mut hook = input_hook();
     let log_events = log_events();
-    let (event_sender, event_receiver) = mpsc::channel();
+    let (event_sender, event_receiver) = mpsc::sync_channel(INPUT_EVENT_QUEUE_CAPACITY);
     let worker_log_events = log_events;
     thread::spawn(move || loop {
         let received = match runtime.pending_dynamic_deadline() {
@@ -97,8 +99,16 @@ fn run() -> Result<(), String> {
             eprintln!("Stringcast input event: {}", describe_input_event(&event));
         }
 
-        if event_sender.send((event, received_at)).is_err() {
-            eprintln!("Stringcast event error: input worker stopped");
+        match event_sender.try_send((event, received_at)) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(_)) => {
+                if log_events {
+                    eprintln!("Stringcast event dropped: input worker queue full");
+                }
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                eprintln!("Stringcast event error: input worker stopped");
+            }
         }
     })
     .map_err(|error| format!("input hook error: {error:?}"))

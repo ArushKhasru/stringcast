@@ -95,8 +95,10 @@ where
     ) -> Result<OperationSnapshot, ExtractionError> {
         let original_clipboard = self.clipboard.snapshot()?;
 
-        thread::sleep(self.select_all_wait);
-        self.input.select_all().map_err(ExtractionError::from)?;
+        if let Err(error) = self.input.select_all() {
+            self.cleanup_failed_extraction(&original_clipboard);
+            return Err(error.into());
+        }
         thread::sleep(self.select_all_wait);
         if let Err(error) = self.input.copy() {
             self.cleanup_failed_extraction(&original_clipboard);

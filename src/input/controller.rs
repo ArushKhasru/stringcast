@@ -101,8 +101,12 @@ where
                 }
             }
             InputEvent::Backspace => {
-                self.pending_dynamic_deadline = None;
+                let rearm_pending_dynamic = self.pending_dynamic_deadline.is_some();
                 self.buffer.backspace();
+                if rearm_pending_dynamic {
+                    self.pending_dynamic_deadline =
+                        Some(now + Duration::from_millis(DYNAMIC_DEBOUNCE_MS));
+                }
                 Ok(InputControllerOutcome::BufferUpdated(
                     self.buffer.as_str().to_string(),
                 ))
@@ -283,6 +287,40 @@ mod tests {
             InputControllerOutcome::Pipeline(PipelineOutcome::Replaced { .. })
         ));
         assert_eq!(controller.buffer(), "");
+    }
+
+    #[test]
+    fn backspace_extends_pending_dynamic_debounce() {
+        let now = Instant::now();
+        let mut controller = controller();
+
+        controller
+            .handle_event(
+                InputEvent::Text("hello ?ask:make this warmer".to_string()),
+                now,
+            )
+            .unwrap();
+        let original_deadline = controller.pending_dynamic_deadline().unwrap();
+
+        controller
+            .handle_event(InputEvent::Backspace, now + Duration::from_millis(100))
+            .unwrap();
+        let updated_deadline = controller.pending_dynamic_deadline().unwrap();
+
+        assert!(updated_deadline > original_deadline);
+
+        let early = controller
+            .handle_pending_timeout(original_deadline + Duration::from_millis(1))
+            .unwrap();
+        assert!(matches!(early, InputControllerOutcome::BufferUpdated(_)));
+
+        let final_outcome = controller
+            .handle_pending_timeout(updated_deadline + Duration::from_millis(1))
+            .unwrap();
+        assert!(matches!(
+            final_outcome,
+            InputControllerOutcome::Pipeline(PipelineOutcome::Replaced { .. })
+        ));
     }
 
     #[test]
