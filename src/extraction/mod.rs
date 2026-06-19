@@ -95,20 +95,39 @@ where
     ) -> Result<OperationSnapshot, ExtractionError> {
         let original_clipboard = self.clipboard.snapshot()?;
 
-        self.input.select_all()?;
         thread::sleep(self.select_all_wait);
-        self.input.copy()?;
+        self.input.select_all().map_err(ExtractionError::from)?;
+        thread::sleep(self.select_all_wait);
+        if let Err(error) = self.input.copy() {
+            self.cleanup_failed_extraction(&original_clipboard);
+            return Err(error.into());
+        }
         thread::sleep(self.clipboard_read_wait);
 
-        let copied_text = self
-            .clipboard
-            .get_text()?
-            .ok_or(ExtractionError::TriggerMissingFromSnapshot)?;
+        let copied_text = match self.clipboard.get_text() {
+            Ok(Some(text)) => text,
+            Ok(None) => {
+                self.cleanup_failed_extraction(&original_clipboard);
+                return Err(ExtractionError::TriggerMissingFromSnapshot);
+            }
+            Err(error) => {
+                self.cleanup_failed_extraction(&original_clipboard);
+                return Err(error.into());
+            }
+        };
+
+        let transform_input = match transform_input_from_snapshot(
+            &copied_text,
+            &context.trigger_match.trigger_text,
+        ) {
+            Ok(transform_input) => transform_input,
+            Err(error) => {
+                self.cleanup_failed_extraction(&original_clipboard);
+                return Err(error);
+            }
+        };
 
         self.clipboard.restore(&original_clipboard)?;
-
-        let transform_input =
-            transform_input_from_snapshot(&copied_text, &context.trigger_match.trigger_text)?;
 
         Ok(OperationSnapshot {
             operation_id: context.operation_id,
@@ -119,6 +138,20 @@ where
             transform_input,
             trigger_text: context.trigger_match.trigger_text,
         })
+    }
+}
+
+impl<C, I> ClipboardTextExtractor<C, I>
+where
+    C: ClipboardBackend,
+    I: InputSimulator,
+{
+    fn cleanup_failed_extraction(
+        &mut self,
+        original_clipboard: &crate::clipboard::ClipboardSnapshot,
+    ) {
+        let _ = self.input.collapse_selection();
+        let _ = self.clipboard.restore(original_clipboard);
     }
 }
 
@@ -205,7 +238,16 @@ mod tests {
         let mut extractor = ClipboardTextExtractor::new(clipboard, input);
 
         let result = extractor.extract(context());
+        let (_, input) = extractor.into_parts();
 
         assert_eq!(result, Err(ExtractionError::TriggerMissingFromSnapshot));
+        assert_eq!(
+            input.actions,
+            vec![
+                RecordedInputAction::SelectAll,
+                RecordedInputAction::Copy,
+                RecordedInputAction::CollapseSelection
+            ]
+        );
     }
 }
