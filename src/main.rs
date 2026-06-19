@@ -67,7 +67,7 @@ fn run() -> Result<(), String> {
     let log_events = log_events();
     let (event_sender, event_receiver) = mpsc::sync_channel(INPUT_EVENT_QUEUE_CAPACITY);
     let worker_log_events = log_events;
-    thread::spawn(move || loop {
+    let _input_worker = thread::spawn(move || loop {
         let received = match runtime.pending_dynamic_deadline() {
             Some(deadline) => {
                 let timeout = deadline.saturating_duration_since(Instant::now());

@@ -33,7 +33,7 @@ impl ForegroundAppProvider for WindowsForegroundAppProvider {
 
 fn foreground_app() -> Result<ForegroundApp, PlatformContextError> {
     let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd.is_null() {
+    if hwnd_is_null(hwnd) {
         return Err(PlatformContextError::Unavailable);
     }
 
@@ -45,11 +45,19 @@ fn foreground_app() -> Result<ForegroundApp, PlatformContextError> {
 
     Ok(ForegroundApp {
         app_id,
-        window_id: Some(format!("{:p}", hwnd)),
+        window_id: Some(format_hwnd(hwnd)),
         display_name: Some(process_image_path),
         secure_input: false,
         elevated,
     })
+}
+
+fn hwnd_is_null(hwnd: HWND) -> bool {
+    hwnd as usize == 0
+}
+
+fn format_hwnd(hwnd: HWND) -> String {
+    format!("0x{:x}", hwnd as usize)
 }
 
 fn foreground_process_id(hwnd: HWND) -> Result<u32, PlatformContextError> {
